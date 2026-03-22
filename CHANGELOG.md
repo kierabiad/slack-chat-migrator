@@ -1,3 +1,25 @@
+## v0.4.2 (2026-03-19)
+
+### Feat
+
+- replace value prop card icons with custom SVG illustrations
+
+### Fix
+
+- address review feedback on membership failure handling
+- include error details in regular membership failure log messages
+- improve diagnostics and skip messages when all memberships fail
+- prevent layout shift in landing page terminal demo animation
+
+## v0.4.1 (2026-03-14)
+
+### Fix
+
+- add explicit UTF-8 encoding to all file I/O — fixes `charmap` codec errors on Windows
+- strip `#` prefix from channel names in init wizard and normalize defensively in config
+- warn about unrecognized channel names in init wizard
+- don't add excluded channels to `channels_processed` list in dry-run reports
+
 ## v0.4.0 (2026-03-06)
 
 ### BREAKING CHANGES
