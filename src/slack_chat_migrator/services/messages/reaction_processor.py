@@ -7,8 +7,10 @@ to synchronous processing when impersonation is unavailable.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from googleapiclient.errors import HttpError
@@ -21,6 +23,19 @@ if TYPE_CHECKING:
     from slack_chat_migrator.core.state import MigrationState
     from slack_chat_migrator.services.chat_adapter import ChatAdapter
     from slack_chat_migrator.services.user_resolver import UserResolver
+
+
+CUSTOM_EMOJI_MAP_PATH = Path("custom_emoji_map.json")
+
+
+def load_custom_emoji_map() -> dict[str, str]:
+    if not CUSTOM_EMOJI_MAP_PATH.exists():
+        return {}
+    with open(CUSTOM_EMOJI_MAP_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+CUSTOM_EMOJI_MAP = load_custom_emoji_map()
 
 
 def process_reactions_batch(
@@ -81,14 +96,14 @@ def _group_and_filter_reactions(
     user_resolver: UserResolver,
     reactions: list[dict[str, Any]],
     message_id: str,
-) -> tuple[dict[str, list[str]], int]:
+) -> tuple[dict[str, list[dict[str, str]]], int]:
     """Group reactions by user email and filter bots/unmapped users.
 
     Returns:
         Tuple of (requests_by_user, reaction_count) where requests_by_user
-        maps internal email → list of emoji strings.
+        maps internal email → list of emoji payload descriptors.
     """
-    requests_by_user: dict[str, list[str]] = defaultdict(list)
+    requests_by_user: dict[str, list[dict[str, str]]] = defaultdict(list)
     reaction_count = 0
 
     log_with_context(
@@ -102,9 +117,19 @@ def _group_and_filter_reactions(
         try:
             import emoji
 
-            emo = emoji.emojize(f":{react['name']}:", language="alias")
             emoji_name = react["name"]
             emoji_users = react.get("users", [])
+
+            if emoji_name in CUSTOM_EMOJI_MAP:
+                emo = {
+                    "type": "custom",
+                    "name": CUSTOM_EMOJI_MAP[emoji_name],
+                }
+            else:
+                emo = {
+                    "type": "unicode",
+                    "value": emoji.emojize(f":{emoji_name}:", language="alias"),
+                }
 
             log_with_context(
                 logging.DEBUG,
@@ -175,7 +200,7 @@ def _build_user_batches(
     state: MigrationState,
     chat: ChatAdapter,
     user_resolver: UserResolver,
-    requests_by_user: dict[str, list[str]],
+    requests_by_user: dict[str, list[dict[str, str]]],
     message_name: str,
     message_id: str,
 ) -> dict[str, BatchHttpRequest]:
@@ -254,7 +279,7 @@ def _process_admin_reactions(
     message_name: str,
     message_id: str,
     email: str,
-    emojis: list[str],
+    emojis: list[dict[str, str]],
 ) -> None:
     """Process reactions synchronously via admin when impersonation is unavailable."""
     log_with_context(
@@ -267,7 +292,21 @@ def _process_admin_reactions(
 
     for emo in emojis:
         try:
-            reaction_body = {"emoji": {"unicode": emo}}
+            if emo["type"] == "custom":
+                reaction_body = {
+                    "emoji": {
+                        "customEmoji": {
+                            "name": emo["name"]
+                        }
+                    }
+                }
+            else:
+                reaction_body = {
+                    "emoji": {
+                        "unicode": emo["value"]
+                    }
+                }
+
             chat.create_reaction(parent=message_name, body=reaction_body)
         except HttpError as e:
             log_with_context(
@@ -287,11 +326,26 @@ def _add_reactions_to_batch(
     message_name: str,
     message_id: str,
     email: str,
-    emojis: list[str],
+    emojis: list[dict[str, str]],
 ) -> None:
     """Add individual reaction requests to a user's batch."""
     for emo in emojis:
-        reaction_body = {"emoji": {"unicode": emo}}
+        if emo["type"] == "custom":
+            reaction_body = {
+                "emoji": {
+                    "customEmoji": {
+                        "name": emo["name"]
+                    }
+                }
+            }
+            emoji_for_log = emo["name"]
+        else:
+            reaction_body = {
+                "emoji": {
+                    "unicode": emo["value"]
+                }
+            }
+            emoji_for_log = emo["value"]
 
         try:
             request = svc.build_create_reaction_request(
@@ -305,7 +359,7 @@ def _add_reactions_to_batch(
                 " Falling back to direct API call.",
                 message_id=message_id,
                 user=email,
-                emoji=emo,
+                emoji=emoji_for_log,
                 channel=state.context.current_channel,
             )
             try:
@@ -316,7 +370,7 @@ def _add_reactions_to_batch(
                     f"Failed to add reaction in fallback mode: {inner_e}",
                     message_id=message_id,
                     user=email,
-                    emoji=emo,
+                    emoji=emoji_for_log,
                 )
 
 

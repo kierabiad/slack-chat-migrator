@@ -31,6 +31,7 @@ env/
 *.swp
 
 # Credentials and secrets
+credentials.json
 *.json
 !site/*.json
 !site/package-lock.json
@@ -46,6 +47,7 @@ site/.astro/
 # Migration logs and output
 migration_logs/
 test_output/
+slack-export/
 
 # Worktrees
 .worktrees/
